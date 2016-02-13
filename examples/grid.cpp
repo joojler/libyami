@@ -57,6 +57,8 @@ extern "C" {
 
 using namespace std;
 
+#define YUYV_SURFACE 1
+
 bool checkDrmRet(int ret,const char* msg)
 {
     if (ret) {
@@ -98,7 +100,12 @@ DrmFrame::DrmFrame(VADisplay display, int fd, uint32_t width, uint32_t height)
     //dirty but handy
     VideoFrame* frame = static_cast<VideoFrame*>(this);
     memset(frame, 0, sizeof(VideoFrame));
+
+#if YUVY_SURFACE
+#else
     frame->fourcc = YAMI_FOURCC_RGBX;
+#endif
+
     frame->surface = static_cast<intptr_t>(VA_INVALID_ID);
 }
 
@@ -119,8 +126,22 @@ bool DrmFrame::createBo()
 
 bool DrmFrame::addToFb()
 {
+#if YUYV_SURFACE
+    uint32_t bo[4];
+    uint32_t pitches[4];
+    uint32_t offsets[4];
+    memset(&bo, 0, sizeof(bo));
+    bo[0] = m_bo;
+    memset(&pitches, 0, sizeof(pitches));
+    pitches[0] = m_pitch;
+    memset(&offsets, 0, sizeof(offsets));
+
+    int ret = drmModeAddFB2(m_fd, m_width, m_height, DRM_FORMAT_YUYV, bo, pitches, offsets,
+        &m_handle, 0);
+#else
     int ret = drmModeAddFB(m_fd, m_width, m_height, 24,
             BPP, m_pitch, m_bo, &m_handle);
+#endif
     return checkDrmRet(ret, "drmModeAddFB");
 }
 
@@ -140,7 +161,11 @@ bool DrmFrame::bindToVaSurface()
     VASurfaceAttribExternalBuffers external;
     unsigned long handle = (unsigned long)arg.name;
     memset(&external, 0, sizeof(external));
+#if YUYV_SURFACE
+    external.pixel_format = VA_FOURCC_YUY2;
+#else
     external.pixel_format = VA_FOURCC_BGRX;
+#endif
     external.width = m_width;
     external.height = m_height;
     external.data_size = m_width * m_height * BPP / 8;
@@ -161,8 +186,13 @@ bool DrmFrame::bindToVaSurface()
     attribs[1].value.value.p = &external;
 
     VASurfaceID id;
+#if YUYV_SURFACE
+    VAStatus vaStatus = vaCreateSurfaces(m_display, VA_RT_FORMAT_YUV422, m_width, m_height,
+                                           &id, 1,attribs, N_ELEMENTS(attribs));
+#else
     VAStatus vaStatus = vaCreateSurfaces(m_display, VA_RT_FORMAT_RGB32, m_width, m_height,
                                            &id, 1,attribs, N_ELEMENTS(attribs));
+#endif
     if (!checkVaapiStatus(vaStatus, "vaCreateSurfaces"))
         return false;
     this->surface = static_cast<intptr_t>(id);
