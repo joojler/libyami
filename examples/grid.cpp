@@ -35,7 +35,7 @@
 #include <vector>
 #include <deque>
 #include <string.h>
-
+#include <i915_drm.h>
 
 using namespace YamiMediaCodec;
 using namespace std;
@@ -58,6 +58,7 @@ extern "C" {
 using namespace std;
 
 #define YUYV_SURFACE 1
+#define DEST_TILING 1
 
 bool checkDrmRet(int ret,const char* msg)
 {
@@ -112,15 +113,42 @@ DrmFrame::DrmFrame(VADisplay display, int fd, uint32_t width, uint32_t height)
 bool DrmFrame::createBo()
 {
     struct drm_mode_create_dumb arg;
+#if DEST_TILING
+    uint32_t tiling = I915_TILING_X;
+    int stride = ((m_width + 511) & (~511));
+    struct drm_i915_gem_set_tiling set_tiling;
+#endif
+
     memset(&arg, 0, sizeof(arg));
     arg.bpp = BPP;
+#if DEST_TILING
+    arg.width = stride;
+    arg.height = ((m_height + 7) & (~7));
+#else
     arg.width = m_width,
     arg.height = m_height;
+#endif
+
     int ret = drmIoctl(m_fd, DRM_IOCTL_MODE_CREATE_DUMB, &arg);
     if (!checkDrmRet(ret, "DRM_IOCTL_MODE_CREATE_DUMB"))
         return false;
     m_bo = arg.handle;
     m_pitch = arg.pitch;
+
+#if DEST_TILING
+    memset(&set_tiling, 0, sizeof(set_tiling));
+    set_tiling.handle = m_bo;
+    set_tiling.tiling_mode = tiling;
+    set_tiling.stride = m_pitch;
+
+    ret = drmIoctl(m_fd,
+                   DRM_IOCTL_I915_GEM_SET_TILING,
+                   &set_tiling);
+
+    if (!checkDrmRet(ret, "DRM_IOCTL_I915_GEM_SET_TILING"))
+        return false;
+#endif
+
     return true;
 }
 
